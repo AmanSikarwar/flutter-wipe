@@ -39,9 +39,7 @@ fn main() {
     spinner.enable_steady_tick(std::time::Duration::from_millis(100));
 
     let search_path_clone = Arc::clone(&search_path);
-    let find_projects_thread = thread::spawn(move || {
-        find_flutter_projects(&search_path_clone)
-    });
+    let find_projects_thread = thread::spawn(move || find_flutter_projects(&search_path_clone));
 
     let projects = find_projects_thread.join().unwrap();
     spinner.finish_with_message("Scan complete.".green().to_string());
@@ -62,8 +60,11 @@ fn main() {
     let mut cleaned_count = 0;
 
     for project_path in projects {
-        println!("
-{}", project_path.display().to_string().bold().yellow());
+        println!(
+            "
+{}",
+            project_path.display().to_string().bold().yellow()
+        );
 
         let build_dir = project_path.join("build");
         let pre_clean_size = get_dir_size(&build_dir).unwrap_or(0);
@@ -145,8 +146,11 @@ fn print_summary(cleaned_count: u32, total_reclaimed: u64) {
         cleaned_count, total_reclaimed_str
     );
 
-    println!("
-{}", "=".repeat(summary_text.len() + 4).green());
+    println!(
+        "
+{}",
+        "=".repeat(summary_text.len() + 4).green()
+    );
     println!(
         "{} {} {}",
         "=".green(),
