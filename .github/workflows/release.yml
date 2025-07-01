@@ -69,6 +69,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal-release
           lipo -create -output target/universal-release/flutter-wipe \
             target/aarch64-apple-darwin/release/flutter-wipe \
             target/x86_64-apple-darwin/release/flutter-wipe
