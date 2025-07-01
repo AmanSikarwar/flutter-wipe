@@ -141,10 +141,8 @@ fn get_dir_size(path: &Path) -> Result<u64, fs_extra::error::Error> {
 
 fn print_summary(cleaned_count: u32, total_reclaimed: u64) {
     let total_reclaimed_str = human_bytes::human_bytes(total_reclaimed as f64);
-    let summary_text = format!(
-        "Processed {} projects. Total space reclaimed: {}",
-        cleaned_count, total_reclaimed_str
-    );
+    let summary_text =
+        format!("Processed {cleaned_count} projects. Total space reclaimed: {total_reclaimed_str}");
 
     println!(
         "
