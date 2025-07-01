@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+  build-and-upload:
+    name: Build & Upload Assets
+    needs: create-release
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: flutter-wipe-x86_64-unknown-linux-gnu.tar.gz
+            asset_name: flutter-wipe-linux-x86_64.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: flutter-wipe-x86_64-pc-windows-msvc.zip
+            asset_name: flutter-wipe-windows-x86_64.zip
+          - os: macos-latest
+            target: aarch64-apple-darwin # This will build a universal binary
+            artifact_name: flutter-wipe-universal-apple-darwin.tar.gz
+            asset_name: flutter-wipe-macos-universal.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: ${{ matrix.target }}
+
+      # Special step for Universal macOS Binary
+      - name: Install x86_64 target for Universal Binary
+        if: matrix.os == 'macos-latest'
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      # Special step for Universal macOS Binary
+      - name: Build x86_64 and create universal binary
+        if: matrix.os == 'macos-latest'
+        run: |
+          cargo build --release --target x86_64-apple-darwin
+          lipo -create -output target/universal-release/flutter-wipe \
+            target/aarch64-apple-darwin/release/flutter-wipe \
+            target/x86_64-apple-darwin/release/flutter-wipe
+
+      - name: Package Artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+            # Use the universal binary for macOS
+            mv ../../universal-release/flutter-wipe .
+          fi
+          # Add executable permissions and create alias
+          chmod +x flutter-wipe
+          ln -s flutter-wipe fw
+          tar -czf ../../../${{ matrix.artifact_name }} flutter-wipe fw
+          cd ../../../
+
+      - name: Package Artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd target/${{ matrix.target }}/release
+          # Create alias
+          copy flutter-wipe.exe fw.exe
+          7z a ../../../${{ matrix.artifact_name }} flutter-wipe.exe fw.exe
+          cd ../../../
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: ./${{ matrix.artifact_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/octet-stream
