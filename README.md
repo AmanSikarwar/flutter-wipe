@@ -49,15 +49,78 @@ The tool also has a shorter alias, `fw`:
 fw
 ```
 
+### Additional Options
+
+#### Exclude patterns
+
+You can exclude specific directories from being scanned:
+
+```sh
+flutter-wipe --exclude "test-projects" --exclude "archived"
+```
+
+#### Configuration file
+
+You can use a configuration file to set default exclude patterns and other options. The tool looks for config files in these locations (in order):
+
+1. `flutter-wipe.toml` (current directory)
+2. `flutter-wipe.config.toml` (current directory)
+3. `~/.flutter-wipe.toml` (home directory)
+4. `~/.config/flutter-wipe.toml` (config directory)
+
+Or specify a custom config file:
+
+```sh
+flutter-wipe --config /path/to/config.toml
+```
+
+Example configuration file:
+
+```toml
+# Additional exclude patterns
+exclude_patterns = [
+    "custom-cache",
+    "temp-flutter-projects",
+    "archived-projects",
+    "backup",
+]
+
+# Whether to use default excludes (true by default)
+default_excludes = true
+```
+
+#### Default exclusions
+
+By default, the tool excludes these directories:
+
+- `.git` (Git repositories)
+- `build` (Build artifacts)
+- `node_modules` (Node.js dependencies)
+- `.dart_tool` (Dart tools)
+- `.pub-cache`, `pub-cache` (Pub cache)
+- `flutter`, `flutter-sdk`, `.flutter` (Flutter SDK)
+- `.mason_cache`, `.mason-cache`, `mason-cache` (Mason cache)
+- Directories specified in `PUB_CACHE` and `FLUTTER_ROOT` environment variables
+- Common Flutter SDK locations in home directory
+
+You can disable default exclusions with:
+
+```sh
+flutter-wipe --no-default-excludes
+```
+
 ## Building from source
 
 To build `flutter-wipe` from source, you'll need the Rust toolchain installed.
 
-1.  Clone the repository:
+1. Clone the repository:
+
     ```sh
     git clone https://github.com/AmanSikarwar/flutter-wipe.git
     ```
-2.  Build the project:
+
+2. Build the project:
+
     ```sh
     cd flutter-wipe
     cargo build --release

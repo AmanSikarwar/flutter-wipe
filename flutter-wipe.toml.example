@@ -1,0 +1,14 @@
+# Flutter Wipe Configuration File
+# Copy this file to flutter-wipe.toml in your project directory or ~/.flutter-wipe.toml
+
+# Additional exclude patterns (in addition to CLI arguments)
+exclude_patterns = [
+    "custom-cache",
+    "temp-flutter-projects",
+    "archived-projects",
+    "backup",
+]
+
+# Whether to use default excludes (true by default)
+# Set to false to only use patterns specified in exclude_patterns and CLI args
+default_excludes = true
