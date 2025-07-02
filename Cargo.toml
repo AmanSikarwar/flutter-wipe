@@ -1,6 +1,11 @@
 
 [package]
 name = "flutter-wipe"
+authors = ["Aman Sikarwar <amansikarwar@gmail.com>"]
+description = "A tool to clean Flutter projects by removing build artifacts and other unnecessary files."
+license = "MIT"
+repository = "https://github.com/amansikarwar/flutter-wipe"
+categories = ["development", "flutter", "cleaning", "command-line-utilities"]
 version = "0.1.0"
 edition = "2021"
 

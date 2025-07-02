@@ -13,7 +13,14 @@ use std::thread;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
-#[command(name = "flutter-wipe", author, version, about, long_about = None, alias = "fw")]
+#[command(
+    name = "flutter-wipe",
+    author = "Aman Sikarwar <amansikarwar@gmail.com>",
+    version,
+    about = "A tool to clean Flutter projects",
+    long_about = "This tool scans for Flutter projects in the specified directory and cleans them by removing build artifacts. It can be configured to exclude certain directories based on patterns.",
+    alias = "fw"
+)]
 struct Cli {
     #[arg(short, long, value_name = "PATH", default_value = ".")]
     directory: PathBuf,
