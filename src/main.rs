@@ -1,15 +1,15 @@
 use clap::Parser;
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
+use std::time::Duration;
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
@@ -33,12 +33,20 @@ struct Cli {
 
     #[arg(short, long, value_name = "CONFIG_FILE")]
     config: Option<PathBuf>,
+
+    #[arg(short = 'j', long, value_name = "THREADS")]
+    threads: Option<usize>,
+
+    #[arg(long)]
+    sequential: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct Config {
     exclude_patterns: Option<Vec<String>>,
     default_excludes: Option<bool>,
+    threads: Option<usize>,
+    sequential: Option<bool>,
 }
 
 impl Default for Config {
@@ -46,6 +54,8 @@ impl Default for Config {
         Self {
             exclude_patterns: None,
             default_excludes: Some(true),
+            threads: None,
+            sequential: Some(false),
         }
     }
 }
@@ -55,11 +65,35 @@ struct Pubspec {
     dependencies: HashMap<String, serde_yaml::Value>,
 }
 
+#[derive(Debug, Clone)]
+struct ProjectInfo {
+    path: PathBuf,
+    pre_clean_size: u64,
+}
+
+#[derive(Debug)]
+struct CleanResult {
+    project_path: PathBuf,
+    success: bool,
+    reclaimed_space: u64,
+    error_message: Option<String>,
+}
+
 fn main() {
     let cli = Cli::parse();
     let config = load_config(&cli);
     let exclude_patterns = Arc::new(get_exclude_patterns(&cli, &config));
-    let search_path = Arc::new(cli.directory);
+    let search_path = Arc::new(cli.directory.clone());
+
+    let thread_count = determine_thread_count(&cli, &config);
+    let use_sequential = should_use_sequential(&cli, &config);
+
+    if !use_sequential {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(thread_count)
+            .build_global()
+            .expect("Failed to initialize thread pool");
+    }
 
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
@@ -68,15 +102,16 @@ fn main() {
             .template("{spinner:.cyan} {msg}")
             .unwrap(),
     );
+
     spinner.set_message("Scanning for Flutter projects...".cyan().to_string());
-    spinner.enable_steady_tick(std::time::Duration::from_millis(100));
+    spinner.enable_steady_tick(Duration::from_millis(100));
 
-    let search_path_clone = Arc::clone(&search_path);
-    let exclude_patterns_clone = Arc::clone(&exclude_patterns);
-    let find_projects_thread =
-        thread::spawn(move || find_flutter_projects(&search_path_clone, &exclude_patterns_clone));
+    let projects = if use_sequential {
+        find_flutter_projects_sequential(&search_path, &exclude_patterns)
+    } else {
+        find_flutter_projects_parallel(&search_path, &exclude_patterns)
+    };
 
-    let projects = find_projects_thread.join().unwrap();
     spinner.finish_with_message("Scan complete.".green().to_string());
 
     if projects.is_empty() {
@@ -91,48 +126,66 @@ fn main() {
             .blue()
     );
 
+    let project_infos = if use_sequential {
+        calculate_sizes_sequential(&projects)
+    } else {
+        calculate_sizes_parallel(&projects)
+    };
+
+    let results = if use_sequential {
+        clean_projects_sequential(&project_infos)
+    } else {
+        clean_projects_parallel(&project_infos)
+    };
+
     let mut total_reclaimed: u64 = 0;
     let mut cleaned_count = 0;
 
-    for project_path in projects {
-        println!("{}", project_path.display().to_string().bold().yellow());
+    for result in results {
+        println!(
+            "{}",
+            result.project_path.display().to_string().bold().yellow()
+        );
 
-        let build_dir = project_path.join("build");
-        let pre_clean_size = get_dir_size(&build_dir).unwrap_or(0);
-
-        match Command::new("flutter")
-            .arg("clean")
-            .current_dir(&project_path)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-        {
-            Ok(output) => {
-                if output.status.success() {
-                    let freed_space_str = human_bytes::human_bytes(pre_clean_size as f64);
-                    println!(
-                        "  {} {} {}",
-                        "✓ Cleaned".green(),
-                        "Reclaimed:".cyan(),
-                        freed_space_str.bright_blue()
-                    );
-                    total_reclaimed += pre_clean_size;
-                    cleaned_count += 1;
-                } else {
-                    let error_msg = String::from_utf8_lossy(&output.stderr);
-                    println!("  {} {}", "✗ Failed:".red(), error_msg.trim());
-                }
-            }
-            Err(e) => {
-                println!("  {} {}", "✗ Failed to execute command:".red(), e);
-            }
+        if result.success {
+            let freed_space_str = human_bytes::human_bytes(result.reclaimed_space as f64);
+            println!(
+                "  {} {} {}",
+                "✓ Cleaned".green(),
+                "Reclaimed:".cyan(),
+                freed_space_str.bright_blue()
+            );
+            total_reclaimed += result.reclaimed_space;
+            cleaned_count += 1;
+        } else {
+            let error_msg = result
+                .error_message
+                .unwrap_or_else(|| "Unknown error".to_string());
+            println!("  {} {}", "✗ Failed:".red(), error_msg.trim());
         }
     }
 
     print_summary(cleaned_count, total_reclaimed);
 }
 
-fn find_flutter_projects(path: &Path, exclude_patterns: &HashSet<String>) -> Vec<PathBuf> {
+fn determine_thread_count(cli: &Cli, config: &Config) -> usize {
+    if let Some(threads) = cli.threads {
+        threads
+    } else if let Some(threads) = config.threads {
+        threads
+    } else {
+        num_cpus::get()
+    }
+}
+
+fn should_use_sequential(cli: &Cli, config: &Config) -> bool {
+    cli.sequential || config.sequential.unwrap_or(false)
+}
+
+fn find_flutter_projects_sequential(
+    path: &Path,
+    exclude_patterns: &HashSet<String>,
+) -> Vec<PathBuf> {
     WalkDir::new(path)
         .into_iter()
         .filter_map(Result::ok)
@@ -141,6 +194,158 @@ fn find_flutter_projects(path: &Path, exclude_patterns: &HashSet<String>) -> Vec
         .filter(|e| is_flutter_project(e.path()))
         .map(|e| e.path().to_path_buf())
         .collect()
+}
+
+fn find_flutter_projects_parallel(path: &Path, exclude_patterns: &HashSet<String>) -> Vec<PathBuf> {
+    let walker = WalkDir::new(path)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_dir())
+        .collect::<Vec<_>>();
+
+    walker
+        .into_par_iter()
+        .filter(|e| !should_exclude_directory(e.path(), exclude_patterns))
+        .filter(|e| is_flutter_project(e.path()))
+        .map(|e| e.path().to_path_buf())
+        .collect()
+}
+
+fn calculate_sizes_sequential(projects: &[PathBuf]) -> Vec<ProjectInfo> {
+    let progress = ProgressBar::new(projects.len() as u64);
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40.green/blue} {pos:>7}/{len:7} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    progress.set_message("Calculating project sizes...");
+
+    let results: Vec<ProjectInfo> = projects
+        .iter()
+        .map(|project_path| {
+            let build_dir = project_path.join("build");
+            let pre_clean_size = get_dir_size(&build_dir).unwrap_or(0);
+            progress.inc(1);
+            ProjectInfo {
+                path: project_path.clone(),
+                pre_clean_size,
+            }
+        })
+        .collect();
+
+    progress.finish_with_message("Size calculation complete.");
+    results
+}
+
+fn calculate_sizes_parallel(projects: &[PathBuf]) -> Vec<ProjectInfo> {
+    let progress = ProgressBar::new(projects.len() as u64);
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40.green/blue} {pos:>7}/{len:7} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    progress.set_message("Calculating project sizes in parallel...");
+
+    let results: Vec<ProjectInfo> = projects
+        .par_iter()
+        .map(|project_path| {
+            let build_dir = project_path.join("build");
+            let pre_clean_size = get_dir_size(&build_dir).unwrap_or(0);
+            progress.inc(1);
+            ProjectInfo {
+                path: project_path.clone(),
+                pre_clean_size,
+            }
+        })
+        .collect();
+
+    progress.finish_with_message("Size calculation complete.");
+    results
+}
+
+fn clean_projects_sequential(project_infos: &[ProjectInfo]) -> Vec<CleanResult> {
+    let progress = ProgressBar::new(project_infos.len() as u64);
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    progress.set_message("Cleaning projects...");
+
+    let results: Vec<CleanResult> = project_infos
+        .iter()
+        .map(|info| {
+            let result = clean_single_project(info);
+            progress.inc(1);
+            result
+        })
+        .collect();
+
+    progress.finish_with_message("Cleaning complete.");
+    results
+}
+
+fn clean_projects_parallel(project_infos: &[ProjectInfo]) -> Vec<CleanResult> {
+    let progress = ProgressBar::new(project_infos.len() as u64);
+    progress.set_style(
+        ProgressStyle::default_bar()
+            .template("{bar:40.cyan/blue} {pos:>7}/{len:7} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+    progress.set_message("Cleaning projects...");
+
+    let results: Vec<CleanResult> = project_infos
+        .par_iter()
+        .map(|info| {
+            let result = clean_single_project(info);
+            progress.inc(1);
+            result
+        })
+        .collect();
+
+    progress.finish_with_message("Cleaning complete.");
+    results
+}
+
+fn clean_single_project(project_info: &ProjectInfo) -> CleanResult {
+    use std::process::{Command, Stdio};
+
+    match Command::new("flutter")
+        .arg("clean")
+        .current_dir(&project_info.path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) => {
+            if output.status.success() {
+                CleanResult {
+                    project_path: project_info.path.clone(),
+                    success: true,
+                    reclaimed_space: project_info.pre_clean_size,
+                    error_message: None,
+                }
+            } else {
+                let error_msg = String::from_utf8_lossy(&output.stderr).to_string();
+                CleanResult {
+                    project_path: project_info.path.clone(),
+                    success: false,
+                    reclaimed_space: 0,
+                    error_message: Some(error_msg),
+                }
+            }
+        }
+        Err(e) => CleanResult {
+            project_path: project_info.path.clone(),
+            success: false,
+            reclaimed_space: 0,
+            error_message: Some(format!("Failed to execute command: {e}")),
+        },
+    }
 }
 
 fn is_flutter_project(path: &Path) -> bool {
