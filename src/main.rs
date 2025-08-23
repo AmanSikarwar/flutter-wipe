@@ -427,28 +427,25 @@ fn get_exclude_patterns(cli: &Cli, config: &Config) -> HashSet<String> {
         patterns.insert(".mason-cache".to_string());
         patterns.insert("mason-cache".to_string());
 
-        if let Ok(pub_cache) = env::var("PUB_CACHE") {
-            if let Some(path) = PathBuf::from(pub_cache).file_name() {
-                if let Some(name) = path.to_str() {
-                    patterns.insert(name.to_string());
-                }
-            }
+        if let Ok(pub_cache) = env::var("PUB_CACHE")
+            && let Some(path) = PathBuf::from(pub_cache).file_name()
+            && let Some(name) = path.to_str()
+        {
+            patterns.insert(name.to_string());
         }
 
-        if let Ok(mason_cache) = env::var("MASON_CACHE") {
-            if let Some(path) = PathBuf::from(mason_cache).file_name() {
-                if let Some(name) = path.to_str() {
-                    patterns.insert(name.to_string());
-                }
-            }
+        if let Ok(mason_cache) = env::var("MASON_CACHE")
+            && let Some(path) = PathBuf::from(mason_cache).file_name()
+            && let Some(name) = path.to_str()
+        {
+            patterns.insert(name.to_string());
         }
 
-        if let Ok(flutter_root) = env::var("FLUTTER_ROOT") {
-            if let Some(path) = PathBuf::from(flutter_root).file_name() {
-                if let Some(name) = path.to_str() {
-                    patterns.insert(name.to_string());
-                }
-            }
+        if let Ok(flutter_root) = env::var("FLUTTER_ROOT")
+            && let Some(path) = PathBuf::from(flutter_root).file_name()
+            && let Some(name) = path.to_str()
+        {
+            patterns.insert(name.to_string());
         }
 
         if let Ok(home) = env::var("HOME") {
@@ -461,12 +458,11 @@ fn get_exclude_patterns(cli: &Cli, config: &Config) -> HashSet<String> {
                 "Developer/flutter",
             ] {
                 let flutter_path = home_path.join(flutter_dir);
-                if flutter_path.exists() {
-                    if let Some(name) = flutter_path.file_name() {
-                        if let Some(name_str) = name.to_str() {
-                            patterns.insert(name_str.to_string());
-                        }
-                    }
+                if flutter_path.exists()
+                    && let Some(name) = flutter_path.file_name()
+                    && let Some(name_str) = name.to_str()
+                {
+                    patterns.insert(name_str.to_string());
                 }
             }
         }
@@ -525,22 +521,22 @@ fn load_config(cli: &Cli) -> Config {
 }
 
 fn should_exclude_directory(path: &Path, exclude_patterns: &HashSet<String>) -> bool {
-    if let Some(path_str) = path.to_str() {
-        if path_str.contains(".mason-cache") || path_str.contains(".mason_cache") {
-            return true;
-        }
+    if let Some(path_str) = path.to_str()
+        && (path_str.contains(".mason-cache") || path_str.contains(".mason_cache"))
+    {
+        return true;
     }
 
-    if let Some(dir_name) = path.file_name() {
-        if let Some(name_str) = dir_name.to_str() {
-            if exclude_patterns.contains(name_str) {
-                return true;
-            }
+    if let Some(dir_name) = path.file_name()
+        && let Some(name_str) = dir_name.to_str()
+    {
+        if exclude_patterns.contains(name_str) {
+            return true;
+        }
 
-            for pattern in exclude_patterns {
-                if name_str.contains(pattern) || pattern.contains(name_str) {
-                    return true;
-                }
+        for pattern in exclude_patterns {
+            if name_str.contains(pattern) || pattern.contains(name_str) {
+                return true;
             }
         }
     }
